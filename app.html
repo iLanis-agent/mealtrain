@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MealTrain - no double lasagna</title>
+<style>
+  :root { --ink:#2c2a24; --muted:#7f7a6e; --accent:#c2543a; --accent-dk:#9d4229; --card:#ffffff; --bg:#faf7f3; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:680px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .tag { color:var(--muted); margin:0 0 20px; line-height:1.45; }
+  .card { background:var(--card); border:1px solid #eadfd4; border-radius:14px; padding:18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  input { padding:9px 10px; border:1px solid #ded1c2; border-radius:8px; font-size:15px; background:#fff; }
+  input[type=text] { width:170px; }
+  input[type=date] { width:155px; }
+  input[type=number] { width:70px; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
+  button:hover { background:var(--accent-dk); }
+  button.ghost { background:#f3e9de; color:var(--ink); }
+  button.ghost:hover { background:#e9dbc9; }
+  .hero { text-align:center; }
+  .hero .big { font-size:30px; font-weight:700; margin:6px 0 2px; }
+  .hero .sub { color:var(--muted); font-size:14.5px; }
+  .bar { height:8px; background:#f3e9de; border-radius:99px; overflow:hidden; margin:12px 0 2px; }
+  .bar i { display:block; height:100%; background:var(--accent); border-radius:99px; }
+  .night { display:flex; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid #f1e7da; }
+  .night:last-child { border-bottom:0; }
+  .night .d { width:120px; flex-shrink:0; font-weight:600; font-size:14.5px; }
+  .night .who { flex:1; font-size:14.5px; }
+  .night .who .dish { color:var(--muted); }
+  .night.open .who { color:#a4442b; font-weight:600; }
+  .night button { font-size:13px; padding:6px 12px; }
+  .claimbox { display:none; width:100%; margin-top:8px; }
+  .claimbox.show { display:flex; gap:8px; flex-wrap:wrap; }
+  .warn { background:#f6ecd2; color:#8a6a14; border-radius:8px; padding:10px 14px; font-size:14px; margin-bottom:14px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MealTrain</h1>
+  <p class="tag">New baby, surgery, a hard month - friends want to feed the family, and somebody has to keep the calendar. MealTrain tracks who brings which meal on which night, so every night is covered and nobody gets lasagna three times in a row.</p>
+
+  <div class="card" id="setupCard">
+    <div class="row">
+      <div><label for="who">Feeding</label><input type="text" id="who" placeholder="the Cohens"></div>
+      <div><label for="start">First night</label><input type="date" id="start"></div>
+      <div><label for="days">Nights</label><input type="number" id="days" value="7" min="2" max="30"></div>
+      <button id="planBtn">Plan the train</button>
+    </div>
+  </div>
+
+  <div class="card hero hidden" id="heroCard">
+    <div class="big" id="covLine">0 of 7 nights covered</div>
+    <div class="sub" id="gapLine"></div>
+    <div class="bar"><i id="barFill" style="width:0%"></i></div>
+  </div>
+
+  <div class="warn hidden" id="dupWarn"></div>
+
+  <div class="card hidden" id="nightsCard"><div id="nights"></div></div>
+</div>
+<script src="engine.js"></script>
+<script>
+(function(){
+  var E = MealTrainEngine;
+  var KEY = 'mealtrain.v1';
+  var st = {who:'', start:'', days:7, claims:[]};
+  try { var s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && s.start) st = s; } catch(e){}
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(st)); } catch(e){} }
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  function render(){
+    $('who').value = st.who; $('start').value = st.start; $('days').value = st.days;
+    if (!st.start){ $('heroCard').classList.add('hidden'); $('nightsCard').classList.add('hidden'); return; }
+    var cov = E.coverage(st.claims, st.start, parseInt(st.days, 10));
+    $('heroCard').classList.remove('hidden');
+    $('nightsCard').classList.remove('hidden');
+    $('covLine').textContent = cov.covered + ' of ' + cov.total + ' nights covered';
+    var gap = E.nextGap(cov);
+    $('gapLine').textContent = gap ? 'Next open night: ' + E.fmtDate(gap) + (st.who ? ' - for ' + st.who : '') : 'Every night is covered. The Cohens eat well.'.replace('The Cohens', st.who || 'The family');
+    $('barFill').style.width = Math.round(cov.covered / cov.total * 100) + '%';
+    var dups = E.duplicates(st.claims);
+    if (dups.length){
+      $('dupWarn').classList.remove('hidden');
+      $('dupWarn').textContent = 'Variety check: ' + dups.map(function(d){ return d.dish + ' is coming twice (' + d.dates.map(E.fmtDate).join(' and ') + ')'; }).join('; ') + '.';
+    } else { $('dupWarn').classList.add('hidden'); }
+    var html = '';
+    for (var i = 0; i < parseInt(st.days, 10); i++){
+      var d = E.dateAt(st.start, i);
+      var c = st.claims.filter(function(x){ return x.date === d; })[0];
+      if (c){
+        html += '<div class="night"><span class="d">' + E.fmtDate(d) + '</span>' +
+          '<span class="who">' + esc(c.person) + ' brings <span class="dish">' + esc(c.dish) + '</span></span>' +
+          '<button class="ghost" data-date="' + d + '" data-act="release">Release</button></div>';
+      } else {
+        html += '<div class="night open" style="flex-wrap:wrap"><span class="d">' + E.fmtDate(d) + '</span>' +
+          '<span class="who">open</span>' +
+          '<button data-date="' + d + '" data-act="claim">Claim it</button>' +
+          '<div class="claimbox" id="cb' + d + '">' +
+            '<input type="text" data-f="person" placeholder="Your name">' +
+            '<input type="text" data-f="dish" placeholder="Dish you will bring">' +
+            '<button data-date="' + d + '" data-act="save">Save</button>' +
+          '</div></div>';
+      }
+    }
+    $('nights').innerHTML = html;
+  }
+
+  $('planBtn').addEventListener('click', function(){
+    if (!$('start').value) return;
+    st.who = $('who').value.trim();
+    st.start = $('start').value;
+    st.days = Math.min(Math.max(parseInt($('days').value, 10) || 7, 2), 30);
+    st.claims = st.claims.filter(function(c){
+      for (var i = 0; i < st.days; i++) if (E.dateAt(st.start, i) === c.date) return true;
+      return false;
+    });
+    save(); render();
+  });
+
+  $('nights').addEventListener('click', function(ev){
+    var btn = ev.target.closest('button'); if (!btn) return;
+    var d = btn.getAttribute('data-date');
+    var act = btn.getAttribute('data-act');
+    if (act === 'release'){ st.claims = E.release(st.claims, d); save(); render(); return; }
+    if (act === 'claim'){ $('cb' + d).classList.add('show'); return; }
+    if (act === 'save'){
+      var box = $('cb' + d);
+      var r = E.claim(st.claims, d, box.querySelector('[data-f=person]').value, box.querySelector('[data-f=dish]').value);
+      if (r.ok){ st.claims = r.claims; save(); render(); }
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
